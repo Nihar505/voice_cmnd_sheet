@@ -1,0 +1,232 @@
+// Database Schema for Voice Sheets Assistant
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Conversation state enum for state machine
+enum ConversationState {
+  IDLE
+  LISTENING
+  TRANSCRIBING
+  INTENT_CLASSIFIED
+  CLARIFICATION_REQUIRED
+  CONFIRMATION_REQUIRED
+  READY_TO_EXECUTE
+  EXECUTING
+  COMPLETED
+  ERROR
+}
+
+// User model with authentication and preferences
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // User preferences
+  preferredLanguage String @default("en-US")
+  voicePreference   String @default("default")
+  defaultSheetId    String?
+
+  // Relationships
+  accounts       Account[]
+  sessions       Session[]
+  googleTokens   GoogleToken[]
+  conversations  Conversation[]
+  auditLogs      AuditLog[]
+  spreadsheets   Spreadsheet[]
+  rollbackActions RollbackAction[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// NextAuth Account model
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+// NextAuth Session model
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Verification tokens for email verification
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Google OAuth tokens (encrypted) for Sheets API access
+model GoogleToken {
+  id           String   @id @default(cuid())
+  userId       String
+  accessToken  String   @db.Text // Encrypted
+  refreshToken String?  @db.Text // Encrypted
+  expiresAt    DateTime
+  scope        String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@index([userId])
+  @@map("google_tokens")
+}
+
+// Conversation tracking for context management
+model Conversation {
+  id        String             @id @default(cuid())
+  userId    String
+  sheetId   String?
+  title     String?
+  state     ConversationState  @default(IDLE)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  endedAt   DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([state])
+  @@map("conversations")
+}
+
+// Individual messages in a conversation
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String // "user" or "assistant"
+  content        String   @db.Text
+  transcript     String?  @db.Text // Original voice transcript
+  intent         Json? // Parsed intent JSON
+  executionPlan  Json? // Execution plan with steps
+  dryRunResult   Json? // Dry-run simulation results
+  executed       Boolean  @default(false)
+  executionError String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+// Spreadsheet metadata
+model Spreadsheet {
+  id              String   @id @default(cuid())
+  userId          String
+  googleSheetId   String   @unique
+  name            String
+  url             String
+  lastAccessedAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([googleSheetId])
+  @@map("spreadsheets")
+}
+
+// Audit log for all sheet operations
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String
+  action        String // "create_sheet", "update_cell", "format_range", etc.
+  sheetId       String?
+  sheetName     String?
+  details       Json // Action details
+  success       Boolean  @default(true)
+  errorMessage  String?  @db.Text
+  ipAddress     String?
+  userAgent     String?
+  executionTime Int? // Milliseconds
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// Rate limiting tracking
+model RateLimit {
+  id         String   @id @default(cuid())
+  identifier String // userId or IP address
+  action     String // "api_call", "voice_transcribe", etc.
+  count      Int      @default(1)
+  windowStart DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([identifier, action, windowStart])
+  @@index([identifier])
+  @@index([windowStart])
+  @@map("rate_limits")
+}
+
+// Rollback actions for undo functionality
+model RollbackAction {
+  id            String   @id @default(cuid())
+  userId        String
+  actionId      String   @unique // Links to AuditLog
+  sheetId       String
+  undoAction    String   // Action type for undo (e.g., "update_cell", "delete_row")
+  undoData      Json     // Data needed to reverse the action (previous values, etc.)
+  executed      Boolean  @default(false)
+  expiresAt     DateTime // Rollback window (e.g., 24 hours from action)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([actionId])
+  @@index([expiresAt])
+  @@map("rollback_actions")
+}
