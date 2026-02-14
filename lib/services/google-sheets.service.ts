@@ -128,6 +128,54 @@ export class GoogleSheetsService {
     }
   }
 
+
+  /**
+   * Append values to the end of a table-like range
+   */
+  async appendValues(
+    spreadsheetId: string,
+    range: string,
+    values: any[][],
+    sheetName?: string
+  ): Promise<sheets_v4.Schema$AppendValuesResponse> {
+    try {
+      const fullRange = sheetName ? `${sheetName}!${range}` : range;
+
+      logger.info('Appending values', { spreadsheetId, range: fullRange, rowCount: values.length });
+
+      const response = await this.sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: fullRange,
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: {
+          values,
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      logger.error('Failed to append values', { error, spreadsheetId, range });
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Clear values in a range
+   */
+  async clearRange(spreadsheetId: string, range: string, sheetName?: string): Promise<void> {
+    try {
+      const fullRange = sheetName ? `${sheetName}!${range}` : range;
+      await this.sheets.spreadsheets.values.clear({
+        spreadsheetId,
+        range: fullRange,
+      });
+    } catch (error) {
+      logger.error('Failed to clear range', { error, spreadsheetId, range });
+      throw this.handleError(error);
+    }
+  }
+
   /**
    * Format cells (bold, color, alignment, etc.)
    */

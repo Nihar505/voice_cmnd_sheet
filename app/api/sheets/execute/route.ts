@@ -8,7 +8,6 @@ import { getGoogleSheetsService } from '@/lib/services/google-sheets.service';
 import { getAuditService } from '@/lib/services/audit.service';
 import { getConversationService } from '@/lib/services/conversation.service';
 import { getRollbackService } from '@/lib/services/rollback.service';
-import type { SheetActionIntent } from '@/lib/services/intent-parser.service';
 import { withRateLimit } from '@/lib/middleware/with-rate-limit';
 
 /**
@@ -17,6 +16,7 @@ import { withRateLimit } from '@/lib/middleware/with-rate-limit';
  */
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
+  let requestBody: Record<string, any> = {};
 
   try {
     const session = await auth();
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     if (rateLimitResponse) return rateLimitResponse;
 
     const body = await req.json();
+    requestBody = body;
     const { intent, sheetId, confirmed } = validateRequest(
       executeSheetActionSchema,
       body
@@ -131,22 +132,20 @@ export async function POST(req: NextRequest) {
     if (session?.user?.id) {
       const auditService = getAuditService();
       const conversationService = getConversationService();
-      const body = await req.json();
-
       await auditService.logAction({
         userId: session.user.id,
-        action: body.intent?.action || 'unknown',
-        sheetId: body.sheetId,
-        details: body,
+        action: requestBody.intent?.action || 'unknown',
+        sheetId: requestBody.sheetId,
+        details: requestBody,
         success: false,
         errorMessage: (error as Error).message,
         executionTime: Date.now() - startTime,
       });
 
       // Update conversation state to ERROR
-      if (body.conversationId) {
+      if (requestBody.conversationId) {
         await conversationService.handleError(
-          body.conversationId,
+          requestBody.conversationId,
           (error as Error).message
         );
       }
@@ -164,7 +163,7 @@ export async function POST(req: NextRequest) {
  */
 async function executeAction(
   sheetsService: any,
-  intent: SheetActionIntent,
+  intent: any,
   sheetId?: string
 ): Promise<any> {
   const { action, parameters } = intent;
@@ -316,7 +315,84 @@ async function executeAction(
         message: `Created ${parameters.chartType} chart`,
       };
 
+
+    case 'apply_formula':
+      if (!sheetId) {
+        throw new Error('Sheet ID is required for formulas');
+      }
+      await sheetsService.updateCells(
+        sheetId,
+        parameters.range,
+        [[parameters.formula]],
+        parameters.sheetName
+      );
+      return {
+        sheetId,
+        message: `Applied formula in range ${parameters.range}`,
+      };
+
+    case 'clear_range':
+      if (!sheetId) {
+        throw new Error('Sheet ID is required for clearing ranges');
+      }
+      await sheetsService.clearRange(sheetId, parameters.range, parameters.sheetName);
+      return {
+        sheetId,
+        message: `Cleared range ${parameters.range}`,
+      };
+
+    case 'append_transaction':
+      if (!sheetId) {
+        throw new Error('Sheet ID is required for appending transactions');
+      }
+      const transactionRow = buildTransactionRow(parameters);
+      await sheetsService.appendValues(
+        sheetId,
+        parameters.range || 'A:E',
+        [transactionRow],
+        parameters.sheetName
+      );
+      return {
+        sheetId,
+        message: 'Transaction appended successfully',
+      };
+
+    case 'create_tally_sheet':
+      const tallySheet = await sheetsService.createSpreadsheet(
+        parameters.title || 'Business Tally Sheet',
+        [parameters.sheetName || 'Tally']
+      );
+      await sheetsService.updateCells(
+        tallySheet.spreadsheetId,
+        'A1:E1',
+        [['Date', 'Type', 'Category', 'Description', 'Amount']],
+        parameters.sheetName || 'Tally'
+      );
+      return {
+        sheetId: tallySheet.spreadsheetId,
+        sheetName: parameters.title || 'Business Tally Sheet',
+        url: tallySheet.spreadsheetUrl,
+        message: 'Created business tally sheet with transaction headers',
+      };
+
     default:
       throw new Error(`Unsupported action: ${action}`);
   }
+}
+
+
+function buildTransactionRow(parameters: Record<string, any>): (string | number)[] {
+  const tx = parameters.transaction || {};
+  const date = tx.date || new Date().toISOString().split('T')[0];
+  const type = tx.type || (tx.amount && Number(tx.amount) < 0 ? 'Expense' : 'Sale');
+  const category = tx.category || parameters.category || 'General';
+  const description = tx.description || parameters.description || 'Voice entry';
+  const rawAmount = tx.amount ?? parameters.amount ?? 0;
+  const amount = typeof rawAmount === 'string' ? Number(rawAmount.replace(/,/g, '')) : Number(rawAmount);
+
+  if (!Number.isFinite(amount)) {
+    throw new Error('Invalid transaction amount');
+  }
+
+  return [date, type, category, description, amount];
 }

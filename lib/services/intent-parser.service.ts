@@ -100,6 +100,8 @@ Available actions:
 - freeze_columns: Freeze columns
 - add_data_validation: Add dropdown/validation rules
 - clear_range: Clear cell contents
+- append_transaction: Append a sales/expense transaction row to a tally sheet
+- create_tally_sheet: Create a pre-formatted business tally sheet
 
 Parameter guidelines:
 - For ranges, use A1 notation (e.g., "A1", "A1:B10")
@@ -111,6 +113,12 @@ Parameter guidelines:
 Set confirmationRequired=true for destructive actions (delete, clear).
 Set clarificationNeeded if the command is ambiguous.
 Set confidence based on how clear the intent is (0.0 to 1.0).
+
+For business tally use-cases, prefer these conventions:
+- Track transactions in columns: Date, Type, Category, Description, Amount
+- Map "sale" to Type="Sale" and "expense"/"spent"/"paid" to Type="Expense"
+- For implicit dates like "today", resolve to ISO date
+- For transaction-like voice commands, prefer append_transaction
 
 ${context ? this.buildContextPrompt(context) : ''}
 
@@ -184,6 +192,34 @@ Always respond with valid JSON only, no additional text.`;
       },
       confirmationRequired: false,
       confidence: 0.95,
+    }) + '\n\n';
+
+    prompt += '4. "I spent 2500 on electricity today"\n';
+    prompt += JSON.stringify({
+      action: 'append_transaction',
+      parameters: {
+        transaction: {
+          date: '2026-01-15',
+          type: 'Expense',
+          category: 'Utilities',
+          description: 'Electricity bill',
+          amount: 2500,
+        },
+        sheetName: 'Tally',
+      },
+      confirmationRequired: false,
+      confidence: 0.96,
+    }) + '\n\n';
+
+    prompt += '5. "Create a business tally sheet for my shop"\n';
+    prompt += JSON.stringify({
+      action: 'create_tally_sheet',
+      parameters: {
+        title: 'Shop Tally Sheet',
+        sheetName: 'Tally',
+      },
+      confirmationRequired: false,
+      confidence: 0.97,
     }) + '\n\n';
 
     prompt += 'Now parse the user command above.';

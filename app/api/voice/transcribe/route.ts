@@ -5,6 +5,8 @@ import { auth } from '@/lib/auth';
 import { logger } from '@/lib/utils/logger';
 import { transcriptionRequestSchema, validateRequest } from '@/lib/utils/validation';
 import { withRateLimit } from '@/lib/middleware/with-rate-limit';
+import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
 
 /**
  * POST /api/voice/transcribe
@@ -32,16 +34,6 @@ export async function POST(req: NextRequest) {
       conversationId,
     });
 
-    // In production, you would implement actual Google Speech-to-Text here
-    // For now, we expect the frontend to use Web Speech API
-    // and send us the transcript directly
-
-    // If audio data is provided (base64), we would:
-    // 1. Decode the base64 audio
-    // 2. Call Google Speech-to-Text API
-    // 3. Return the transcript
-
-    // Mock response (replace with actual STT implementation)
     if (audio === 'mock') {
       return NextResponse.json({
         transcript: 'This is a mock transcript',
@@ -50,32 +42,40 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // For real implementation with Google Speech-to-Text:
-    /*
-    const speech = require('@google-cloud/speech');
-    const client = new speech.SpeechClient();
+    const openAiApiKey = process.env.OPENAI_API_KEY;
+    if (!openAiApiKey) {
+      return NextResponse.json(
+        {
+          error: 'Transcription service unavailable',
+          message: 'OPENAI_API_KEY is not configured',
+        },
+        { status: 503 }
+      );
+    }
 
     const audioBuffer = Buffer.from(audio, 'base64');
-    const [response] = await client.recognize({
-      audio: { content: audioBuffer },
-      config: {
-        encoding: 'WEBM_OPUS',
-        sampleRateHertz: 48000,
-        languageCode: 'en-US',
-        enableAutomaticPunctuation: true,
-      },
+    const audioFormat = format || 'audio/webm';
+    const extension = audioFormat.split('/')[1] || 'webm';
+    const file = await toFile(audioBuffer, `voice-input.${extension}`);
+    const client = new OpenAI({ apiKey: openAiApiKey });
+
+    const transcription = await client.audio.transcriptions.create({
+      file,
+      model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
+      language: 'en',
+      response_format: 'verbose_json',
     });
 
-    const transcript = response.results
-      ?.map(result => result.alternatives?.[0]?.transcript)
-      .join(' ') || '';
-
-    const confidence = response.results?.[0]?.alternatives?.[0]?.confidence || 0;
-    */
+    const transcript = transcription.text?.trim();
+    if (!transcript) {
+      throw new Error('Speech could not be transcribed');
+    }
 
     return NextResponse.json({
-      transcript: audio, // In production, this would be the actual transcript
-      confidence: 0.95,
+      transcript,
+      confidence: transcription.segments?.[0]?.avg_logprob
+        ? Math.max(0, Math.min(1, 1 + transcription.segments[0].avg_logprob))
+        : 0.9,
       language: 'en-US',
     });
   } catch (error) {
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     available: true,
-    provider: 'web-speech-api',
+    provider: 'openai-audio-transcription',
     languages: ['en-US', 'en-GB', 'es-ES', 'fr-FR', 'de-DE'],
   });
 }
