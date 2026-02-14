@@ -36,7 +36,7 @@ export interface Message {
 export interface DryRunResult {
   cells_affected: string[];
   rows_affected?: number;
-  columns_affected?: number;
+  columns_affected?: string[];
   risk_level: 'low' | 'medium' | 'high';
   reversible: boolean;
   preview: string;

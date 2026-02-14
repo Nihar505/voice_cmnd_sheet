@@ -7,7 +7,7 @@ import type { sheets_v4 } from 'googleapis';
 export interface DryRunResult {
   cells_affected: string[];
   rows_affected?: number[];
-  columns_affected?: number[];
+  columns_affected?: string[];
   risk_level: 'low' | 'medium' | 'high';
   reversible: boolean;
   preview: string;
@@ -88,6 +88,12 @@ export class DryRunService {
 
         case 'apply_formula':
           return this.simulateApplyFormula(parameters);
+
+        case 'append_transaction':
+          return this.simulateAppendTransaction(parameters);
+
+        case 'create_tally_sheet':
+          return this.simulateCreateTallySheet(parameters);
 
         default:
           throw new Error(`Unsupported action for dry-run: ${action}`);
@@ -312,6 +318,43 @@ export class DryRunService {
       preview: `Will merge cells in range ${range}`,
       estimated_impact: {
         cells: this.expandRange(range).length,
+      },
+    };
+  }
+
+
+  /**
+   * Simulate appending a business transaction row
+   */
+  private simulateAppendTransaction(params: any): DryRunResult {
+    const tx = params.transaction || {};
+    const amount = tx.amount ?? params.amount ?? 0;
+
+    return {
+      cells_affected: [],
+      risk_level: 'low',
+      reversible: true,
+      preview: `Will append a ${tx.type || 'transaction'} entry (${amount}) to ${params.sheetName || 'the active sheet'}`,
+      estimated_impact: {
+        cells: 5,
+        rows: 1,
+      },
+    };
+  }
+
+  /**
+   * Simulate creating a business tally sheet with headers
+   */
+  private simulateCreateTallySheet(params: any): DryRunResult {
+    return {
+      cells_affected: ['A1', 'B1', 'C1', 'D1', 'E1'],
+      risk_level: 'low',
+      reversible: false,
+      preview: `Will create a new tally spreadsheet "${params.title || 'Business Tally Sheet'}" with columns Date, Type, Category, Description, Amount`,
+      estimated_impact: {
+        cells: 5,
+        rows: 1,
+        columns: 5,
       },
     };
   }

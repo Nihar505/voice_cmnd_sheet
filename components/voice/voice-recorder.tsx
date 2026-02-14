@@ -65,7 +65,7 @@ export function VoiceRecorder({
           confidence: number;
         }>('/api/voice/transcribe', {
           audio: base64,
-          format: blob.type.includes('webm') ? 'webm' : 'wav',
+          format: blob.type.includes('webm') ? 'audio/webm' : 'audio/wav',
           conversationId,
         });
 

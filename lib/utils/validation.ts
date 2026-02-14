@@ -38,6 +38,8 @@ export const sheetActionIntentSchema = z.object({
     'freeze_columns',
     'add_data_validation',
     'clear_range',
+    'append_transaction',
+    'create_tally_sheet',
   ]),
   parameters: z.record(z.any()),
   confirmationRequired: z.boolean().default(false),

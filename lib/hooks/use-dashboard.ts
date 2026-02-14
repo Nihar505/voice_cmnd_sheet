@@ -107,14 +107,29 @@ export function useDashboard(): UseDashboardReturn {
         setState('INTENT_CLASSIFIED');
         const intentResponse = await api.post<{
           intent: SheetActionIntent;
-          validation: { isValid: boolean };
+          validation: { valid: boolean; message?: string };
         }>('/api/intent/parse', {
           transcript,
           conversationId: convId,
           sheetId: selectedSheet?.googleSheetId,
         });
 
-        const { intent } = intentResponse;
+        const { intent, validation } = intentResponse;
+
+        if (!validation.valid) {
+          setState('CLARIFICATION_REQUIRED');
+          const assistantMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: validation.message || 'Please clarify your request.',
+            intent,
+            executed: false,
+            createdAt: new Date().toISOString(),
+          };
+          setMessages((prev) => [...prev, assistantMsg]);
+          setIsProcessing(false);
+          return;
+        }
 
         if (intent.clarificationNeeded) {
           setState('CLARIFICATION_REQUIRED');
@@ -133,19 +148,25 @@ export function useDashboard(): UseDashboardReturn {
 
         // Dry run
         if (selectedSheet) {
-          const dryRunResponse = await api.post<DryRunResult>(
+          const dryRunResponse = await api.post<{
+            success: boolean;
+            dryRun: DryRunResult;
+            requiresConfirmation: boolean;
+          }>(
             '/api/sheets/dry-run',
             {
-              intent,
+              action: intent.action,
+              parameters: intent.parameters,
               sheetId: selectedSheet.googleSheetId,
+              conversationId: convId,
             }
           );
 
-          setDryRunResult(dryRunResponse);
+          setDryRunResult(dryRunResponse.dryRun);
           setPendingIntent(intent);
 
           if (
-            dryRunResponse.risk_level === 'high' ||
+            dryRunResponse.requiresConfirmation ||
             intent.confirmationRequired
           ) {
             setState('CONFIRMATION_REQUIRED');
@@ -158,7 +179,7 @@ export function useDashboard(): UseDashboardReturn {
           await executeIntent(intent, convId);
         } else {
           // No sheet selected, but might be creating one
-          if (intent.action === 'create_spreadsheet') {
+          if (intent.action === 'create_spreadsheet' || intent.action === 'create_tally_sheet') {
             await executeIntent(intent, convId);
           } else {
             setState('ERROR');
